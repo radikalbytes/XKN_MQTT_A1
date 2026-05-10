@@ -31,6 +31,7 @@ lv_style_t style_label_current;
 lv_style_t style_label_current_cold;
 lv_style_t style_label_target;
 lv_style_t style_label_message;
+lv_style_t style_label_mqtt;
 lv_style_t knob_style;
 lv_style_t style_label_fan;
 
@@ -229,6 +230,9 @@ void init_styles(){
   lv_style_set_text_font(&style_label_message, &lv_font_montserrat_22);
   lv_style_set_text_color(&style_label_message, COLOR_LABEL_MESSAGE);
 
+  lv_style_set_text_font(&style_label_mqtt, &lv_font_montserrat_18);
+  lv_style_set_text_color(&style_label_mqtt, lv_color_hex(0x00a8ff));
+
   lv_style_set_text_font(&style_label_current, &lv_font_montserrat_22);
   lv_style_set_text_color(&style_label_current, lv_color_hex(0x00ff00));
 
@@ -267,15 +271,20 @@ void init_ui()
 
   lv_obj_t *label1 = lv_label_create(screen1);
   lv_obj_add_style(label1, &style_label_logo, LV_PART_MAIN);
-  lv_label_set_text(label1, "XKN");
-  lv_obj_align(label1, LV_ALIGN_CENTER, 0, 0);
+  lv_label_set_text(label1, "XKN 2");
+  lv_obj_align(label1, LV_ALIGN_CENTER, 0, -10);
+
+  lv_obj_t *label_mqtt = lv_label_create(screen1);
+  lv_obj_add_style(label_mqtt, &style_label_mqtt, LV_PART_MAIN);
+  lv_label_set_text(label_mqtt, "MQTT");
+  lv_obj_align(label_mqtt, LV_ALIGN_CENTER, 0, 22);
 
   label2 = lv_label_create(screen1);
   lv_style_set_text_font(&style_label_status, &lv_font_montserrat_22);
   lv_style_set_text_color(&style_label_status, lv_color_hex(0xa0a0a0));
   lv_obj_add_style(label2, &style_label_status, LV_PART_MAIN);
   lv_label_set_text(label2, "Booting");
-  lv_obj_align(label2, LV_ALIGN_CENTER, 0, 28);
+  lv_obj_align(label2, LV_ALIGN_CENTER, 0, 40);
 
   preload = lv_spinner_create(screen1, 5000, 60);
   lv_obj_set_size(preload, 239, 239);
