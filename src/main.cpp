@@ -137,6 +137,7 @@ void setup()
   }
 
   connect_wifi();
+  printer_mqtt_init();
 
   lv_label_set_text(label2, "Ready");
   lv_task_handler();
@@ -149,6 +150,7 @@ void loop()
 {
   ArduinoOTA.handle();
   lv_task_handler();
+  printer_mqtt_loop();
 
   check_wifi();
 

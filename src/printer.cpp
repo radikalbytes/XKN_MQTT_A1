@@ -13,63 +13,187 @@
 #include <stdlib.h>
 #include <iostream>
 #include <test.h>
-#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
+#include <PubSubClient.h>
 #include <WiFiClient.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include "printer.h"
+#include "myconfig.h"
+
+namespace {
+WiFiClientSecure secureClient;
+PubSubClient mqttClient(secureClient);
+printer_values cachedValues;
+bool hasMqttData = false;
+unsigned long lastMqttConnectAttempt = 0;
+unsigned long lastMqttPushRequest = 0;
+char mqttReportTopic[64] = {0};
+char mqttRequestTopic[64] = {0};
+
+uint16_t toPercent(float value)
+{
+  if (value < 0.0f)
+    return 0;
+  if (value <= 1.0f)
+    return (uint16_t)(value * 100.0f);
+  if (value <= 15.0f)
+    return (uint16_t)((value / 15.0f) * 100.0f);
+  if (value > 100.0f)
+    return 100;
+  return (uint16_t)value;
+}
+
+bool isPrintingState(const String &state)
+{
+  return state == "RUNNING" || state == "PREPARE" || state == "PAUSE" || state == "SLICING";
+}
+
+void requestPrinterPush()
+{
+  static uint32_t sequence = 1;
+  char payload[128];
+  snprintf(payload, sizeof(payload), "{\"pushing\":{\"sequence_id\":\"%lu\",\"command\":\"pushall\"}}", (unsigned long)sequence++);
+  mqttClient.publish(mqttRequestTopic, payload);
+  lastMqttPushRequest = millis();
+}
+
+void onMqttMessage(char *topic, byte *payload, unsigned int length)
+{
+  if (strcmp(topic, mqttReportTopic) != 0)
+    return;
+
+  DynamicJsonDocument doc(12288);
+  DeserializationError err = deserializeJson(doc, payload, length);
+  if (err)
+  {
+    Serial.print("MQTT JSON parse error: ");
+    Serial.println(err.c_str());
+    return;
+  }
+
+  JsonVariant printRoot = doc["print"];
+  if (printRoot.isNull())
+    printRoot = doc.as<JsonVariant>();
+
+  if (!printRoot["bed_temper"].isNull())
+    cachedValues.bedtemp_actual = (uint16_t)printRoot["bed_temper"].as<float>();
+  if (!printRoot["bed_target_temper"].isNull())
+    cachedValues.bedtemp_target = (uint16_t)printRoot["bed_target_temper"].as<float>();
+  if (!printRoot["nozzle_temper"].isNull())
+    cachedValues.tooltemp_actual = (uint16_t)printRoot["nozzle_temper"].as<float>();
+  if (!printRoot["nozzle_target_temper"].isNull())
+    cachedValues.tooltemp_target = (uint16_t)printRoot["nozzle_target_temper"].as<float>();
+  if (!printRoot["chamber_temper"].isNull())
+    cachedValues.chamber_temp = (uint16_t)printRoot["chamber_temper"].as<float>();
+
+  if (!printRoot["mc_percent"].isNull())
+    cachedValues.progress = printRoot["mc_percent"].as<float>();
+  else if (!printRoot["progress"].isNull())
+    cachedValues.progress = toPercent(printRoot["progress"].as<float>());
+
+  if (!printRoot["cooling_fan_speed"].isNull())
+    cachedValues.fan_speed = toPercent(printRoot["cooling_fan_speed"].as<float>());
+  else if (!printRoot["fan_gear"].isNull())
+    cachedValues.fan_speed = toPercent(printRoot["fan_gear"].as<float>());
+
+  String state = printRoot["gcode_state"].as<String>();
+  if (state.length() > 0)
+  {
+    cachedValues.message = state;
+    cachedValues.is_printing = isPrintingState(state);
+  }
+
+  int printError = printRoot["print_error"].as<int>();
+  if (printError != 0)
+  {
+    cachedValues.message = "ERROR " + String(printError);
+  }
+
+  hasMqttData = true;
+}
+
+bool connectMqtt()
+{
+  if (mqttClient.connected())
+    return true;
+
+  String clientId = "xkn-" + String((uint32_t)(ESP.getEfuseMac() & 0xFFFFFFFF), HEX);
+  bool ok = mqttClient.connect(clientId.c_str(), "bblp", mqtt_access_code);
+  if (!ok)
+  {
+    Serial.print("MQTT connect failed, state=");
+    Serial.println(mqttClient.state());
+    return false;
+  }
+
+  mqttClient.subscribe(mqttReportTopic);
+  requestPrinterPush();
+  Serial.println("MQTT connected");
+  return true;
+}
+} // namespace
+
+void printer_mqtt_init()
+{
+  snprintf(mqttReportTopic, sizeof(mqttReportTopic), "device/%s/report", mqtt_serial);
+  snprintf(mqttRequestTopic, sizeof(mqttRequestTopic), "device/%s/request", mqtt_serial);
+
+  if (!mqtt_reject_unauthorized)
+  {
+    secureClient.setInsecure();
+  }
+
+  secureClient.setTimeout(5000);
+  mqttClient.setServer(mqtt_host, mqtt_port);
+  mqttClient.setCallback(onMqttMessage);
+  mqttClient.setBufferSize(12288);
+  mqttClient.setKeepAlive(20);
+  mqttClient.setSocketTimeout(5);
+
+  cachedValues.message = "MQTT connecting";
+  connectMqtt();
+}
+
+void printer_mqtt_loop()
+{
+  if (WiFi.status() != WL_CONNECTED)
+    return;
+
+  if (!mqttClient.connected())
+  {
+    unsigned long now = millis();
+    if (now - lastMqttConnectAttempt >= 5000)
+    {
+      lastMqttConnectAttempt = now;
+      connectMqtt();
+    }
+    return;
+  }
+
+  mqttClient.loop();
+
+  unsigned long now = millis();
+  if (now - lastMqttPushRequest >= 30000)
+  {
+    requestPrinterPush();
+  }
+}
 
 void get_printer_progress(printer_values *pValues)
 {
-  HTTPClient http;
-  http.begin("http://" + klipper_ip + "/printer/objects/query?fan&display_status&temperature_sensor%20Chamber&extruder&heater_bed&print_stats&webhooks");
-  int httpCode = http.GET();
-  if (httpCode == 200)
+  if (!hasMqttData)
   {
-    String payload = http.getString();
-    DynamicJsonDocument doc(payload.length() * 2);
-    deserializeJson(doc, payload);
-    pValues->progress = (doc["result"]["status"]["display_status"]["progress"].as<double>()) * 100.0;
-    pValues->message = (doc["result"]["status"]["display_status"]["message"].as<String>());
-    pValues->fan_speed = (uint16_t)((doc["result"]["status"]["fan"]["speed"].as<double>()) * 100.0);
-    pValues->chamber_temp = (uint16_t)((doc["result"]["status"]["temperature_sensor Chamber"]["temperature"].as<double>()));
+    cachedValues.message = "Waiting MQTT data";
   }
-  else
-  {
-    Serial.println("Error while getting status");
-  }
-  http.end();
+  *pValues = cachedValues;
 }
-
 
 void get_printer_status(printer_values *pValues)
 {
-  HTTPClient http;
-  http.begin("http://" + klipper_ip + "/api/printer");
-  int httpCode = http.GET();
-  if (httpCode == 200)
+  if (!hasMqttData)
   {
-    String payload = http.getString();
-    DynamicJsonDocument doc(payload.length() * 2);
-    deserializeJson(doc, payload);
-    String nameStr1 = doc["temperature"]["bed"]["actual"].as<String>();
-    String nameStr2 = doc["temperature"]["bed"]["target"].as<String>();
-    String nameStr3 = doc["temperature"]["tool0"]["actual"].as<String>();
-    String nameStr4 = doc["temperature"]["tool0"]["target"].as<String>();
-    String nameStr5 = doc["state"]["flags"]["printing"].as<String>();
-    String nameStr6 = doc["state"]["flags"]["paused"].as<String>();
-
-    bool isPrinting = doc["state"]["flags"]["printing"].as<bool>();
-    pValues->is_printing = isPrinting;
-
-    pValues->bedtemp_actual = (uint16_t)((doc["temperature"]["bed"]["actual"].as<double>()));
-    pValues->bedtemp_target = (uint16_t)((doc["temperature"]["bed"]["target"].as<double>()));
-    pValues->tooltemp_actual = (uint16_t)((doc["temperature"]["tool0"]["actual"].as<double>()));
-    pValues->tooltemp_target = (uint16_t)((doc["temperature"]["tool0"]["target"].as<double>()));
+    cachedValues.message = "Waiting MQTT data";
   }
-  else
-  {
-    Serial.println("Error while getting status");
-  }
-  http.end();
+  *pValues = cachedValues;
 }

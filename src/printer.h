@@ -7,8 +7,6 @@
 #include <iostream>
 #include <Arduino.h>
 
-extern const String klipper_ip;
-
 
 struct printer_values
 {
@@ -28,5 +26,7 @@ struct printer_values
 
 void get_printer_progress(printer_values *spValues);
 void get_printer_status(printer_values *spValues);
+void printer_mqtt_init();
+void printer_mqtt_loop();
 
 #endif
