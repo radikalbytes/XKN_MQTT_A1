@@ -14,6 +14,8 @@ struct printer_values
   uint16_t bedtemp_target = 0;
   uint16_t tooltemp_actual = 0;
   uint16_t tooltemp_target = 0;
+  uint16_t layer_current = 0;
+  uint16_t layer_total = 0;
   // uint16_t last_tooltemp_target = 0;
   // uint16_t last_bedtemp_target = 0;
   double progress = 0;
@@ -22,6 +24,7 @@ struct printer_values
   char *message2;
   uint16_t fan_speed = 0;
   bool is_printing = false;
+  bool has_error = false;
 };
 
 void get_printer_progress(printer_values *spValues);

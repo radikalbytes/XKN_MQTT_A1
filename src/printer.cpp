@@ -87,6 +87,16 @@ void onMqttMessage(char *topic, byte *payload, unsigned int length)
   if (!printRoot["chamber_temper"].isNull())
     cachedValues.chamber_temp = (uint16_t)printRoot["chamber_temper"].as<float>();
 
+  if (!printRoot["layer_num"].isNull())
+    cachedValues.layer_current = (uint16_t)printRoot["layer_num"].as<int>();
+  else if (!printRoot["current_layer"].isNull())
+    cachedValues.layer_current = (uint16_t)printRoot["current_layer"].as<int>();
+
+  if (!printRoot["total_layer_num"].isNull())
+    cachedValues.layer_total = (uint16_t)printRoot["total_layer_num"].as<int>();
+  else if (!printRoot["total_layer"].isNull())
+    cachedValues.layer_total = (uint16_t)printRoot["total_layer"].as<int>();
+
   if (!printRoot["mc_percent"].isNull())
     cachedValues.progress = printRoot["mc_percent"].as<float>();
   else if (!printRoot["progress"].isNull())
@@ -98,13 +108,14 @@ void onMqttMessage(char *topic, byte *payload, unsigned int length)
     cachedValues.fan_speed = toPercent(printRoot["fan_gear"].as<float>());
 
   String state = printRoot["gcode_state"].as<String>();
-  if (state.length() > 0)
+  if (state.length() > 0 && state != "null")
   {
     cachedValues.message = state;
     cachedValues.is_printing = isPrintingState(state);
   }
 
   int printError = printRoot["print_error"].as<int>();
+  cachedValues.has_error = (printError != 0);
   if (printError != 0)
   {
     cachedValues.message = "ERROR " + String(printError);

@@ -6,6 +6,7 @@
 #include <EEPROM.h>
 #include <Ticker.h>
 #include <lvgl.h>
+#include <WiFi.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -49,12 +50,118 @@ lv_obj_t *progress_label;
 lv_obj_t *progress_arc;
 lv_obj_t *label_fan_speed;
 lv_obj_t *label_chamber_temp;
+lv_obj_t *label_layer_total;
+lv_obj_t *wifi_bars[4] = {nullptr, nullptr, nullptr, nullptr};
 lv_obj_t *arc_fan;
 lv_obj_t *label_message;
 
 String lastMessage = "";
 bool screensaver_active = false;
 unsigned long lastUpdate;
+unsigned long centerToggleLastMs = 0;
+bool centerShowProgress = true;
+bool centerFadeInitialized = false;
+const uint16_t centerFadeMs = 380;
+const uint16_t centerToggleMs = 2000;
+String latchedCenterStatus = "";
+int16_t latchedArcValue = 0;
+
+static void set_label_text_opa(void *obj, int32_t value)
+{
+  lv_obj_set_style_text_opa((lv_obj_t *)obj, (lv_opa_t)value, LV_PART_MAIN);
+}
+
+static void animate_label_fade(lv_obj_t *obj, lv_opa_t from, lv_opa_t to, uint16_t duration)
+{
+  lv_anim_t a;
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, obj);
+  lv_anim_set_values(&a, from, to);
+  lv_anim_set_time(&a, duration);
+  lv_anim_set_exec_cb(&a, set_label_text_opa);
+  lv_anim_start(&a);
+}
+
+static void set_arc_value_anim(void *obj, int32_t value)
+{
+  lv_arc_set_value((lv_obj_t *)obj, value);
+}
+
+static void animate_progress_arc(lv_obj_t *arc, int16_t target, uint16_t duration)
+{
+  lv_anim_t a;
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, arc);
+  lv_anim_set_values(&a, 0, target);
+  lv_anim_set_time(&a, duration);
+  lv_anim_set_exec_cb(&a, set_arc_value_anim);
+  lv_anim_start(&a);
+}
+
+void setCenterLabelsTheme(lv_color_t textColor)
+{
+  lv_obj_set_style_text_color(progress_label, textColor, LV_PART_MAIN);
+  lv_obj_set_style_text_color(label_message, textColor, LV_PART_MAIN);
+
+  lv_obj_set_style_bg_opa(progress_label, LV_OPA_TRANSP, LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(label_message, LV_OPA_TRANSP, LV_PART_MAIN);
+  lv_obj_set_style_pad_left(progress_label, 0, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(progress_label, 0, LV_PART_MAIN);
+  lv_obj_set_style_pad_top(progress_label, 0, LV_PART_MAIN);
+  lv_obj_set_style_pad_bottom(progress_label, 0, LV_PART_MAIN);
+  lv_obj_set_style_pad_left(label_message, 0, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(label_message, 0, LV_PART_MAIN);
+  lv_obj_set_style_pad_top(label_message, 0, LV_PART_MAIN);
+  lv_obj_set_style_pad_bottom(label_message, 0, LV_PART_MAIN);
+}
+
+void updateWifiIndicator()
+{
+  int quality = 0;
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    int32_t rssi = WiFi.RSSI();
+    if (rssi <= -100)
+      quality = 0;
+    else if (rssi >= -50)
+      quality = 100;
+    else
+      quality = 2 * (rssi + 100);
+  }
+
+  int level = 0;
+  if (quality > 0 && quality <= 25)
+    level = 1;
+  else if (quality > 25 && quality <= 50)
+    level = 2;
+  else if (quality > 50 && quality <= 75)
+    level = 3;
+  else if (quality > 75)
+    level = 4;
+
+  lv_color_t activeColor = lv_color_hex(0xff0000);
+  if (quality > 25 && quality <= 50)
+    activeColor = lv_color_hex(0xffd400);
+  else if (quality > 50)
+    activeColor = lv_color_hex(0x00ff00);
+
+  for (int i = 0; i < 4; i++)
+  {
+    if (wifi_bars[i] == nullptr)
+      continue;
+
+    if (i < level)
+    {
+      lv_obj_set_style_bg_color(wifi_bars[i], activeColor, LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(wifi_bars[i], LV_OPA_COVER, LV_PART_MAIN);
+    }
+    else
+    {
+      lv_obj_set_style_bg_color(wifi_bars[i], lv_color_hex(0x404040), LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(wifi_bars[i], LV_OPA_60, LV_PART_MAIN);
+    }
+  }
+}
 
 void my_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p)
 {
@@ -199,11 +306,13 @@ void init_ui()
   lv_obj_add_style(progress_label, &style_label_progress, LV_PART_MAIN);
   lv_label_set_text(progress_label, "-");
   lv_obj_align(progress_label, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_set_style_text_opa(progress_label, LV_OPA_COVER, LV_PART_MAIN);
 
   label_message = lv_label_create(screen2);
   lv_obj_add_style(label_message, &style_label_message, LV_PART_MAIN);
   lv_label_set_text(label_message, "-");
   lv_obj_align(label_message, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_set_style_text_opa(label_message, LV_OPA_TRANSP, LV_PART_MAIN);
 
   bed_cur_temp_label = lv_label_create(screen2);
   lv_obj_add_style(bed_cur_temp_label, &style_label_current, LV_PART_MAIN);
@@ -229,7 +338,7 @@ void init_ui()
   label_fan_speed = lv_label_create(screen2);
   lv_obj_add_style(label_fan_speed, &style_label_current, LV_PART_MAIN);
   lv_label_set_text(label_fan_speed, "-");
-  lv_obj_align(label_fan_speed, LV_ALIGN_CENTER, 35, -50);
+  lv_obj_align(label_fan_speed, LV_ALIGN_CENTER, 35, -60);
 
   arc_fan = lv_arc_create(screen2);
   lv_obj_set_size(arc_fan, 30, 30);
@@ -249,7 +358,12 @@ void init_ui()
   label_chamber_temp = lv_label_create(screen2);
   lv_obj_add_style(label_chamber_temp, &style_label_current, LV_PART_MAIN);
   lv_label_set_text(label_chamber_temp, "-");
-  lv_obj_align(label_chamber_temp, LV_ALIGN_CENTER, -35, -50);
+  lv_obj_align(label_chamber_temp, LV_ALIGN_CENTER, -35, -60);
+
+  label_layer_total = lv_label_create(screen2);
+  lv_obj_add_style(label_layer_total, &style_label_target, LV_PART_MAIN);
+  lv_label_set_text(label_layer_total, "-");
+  lv_obj_align(label_layer_total, LV_ALIGN_CENTER, -35, -40);
 
   progress_arc = lv_arc_create(screen2);
   lv_obj_set_size(progress_arc, 239, 239);
@@ -262,6 +376,20 @@ void init_ui()
   lv_arc_set_value(progress_arc, 0);
   lv_obj_remove_style(progress_arc, NULL, LV_PART_KNOB);
   lv_obj_clear_flag(progress_arc, LV_OBJ_FLAG_CLICKABLE);
+
+  // WiFi quality indicator (4 bars) on the left side
+  const int16_t wifiCenterOffsetX = -10;
+  const int16_t wifiTopOffsetY = 15;
+  const int16_t wifiBarHeights[4] = {6, 10, 14, 18};
+  for (int i = 0; i < 4; i++)
+  {
+    wifi_bars[i] = lv_obj_create(screen2);
+    lv_obj_clear_flag(wifi_bars[i], LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_border_width(wifi_bars[i], 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(wifi_bars[i], 1, LV_PART_MAIN);
+    lv_obj_set_size(wifi_bars[i], 5, wifiBarHeights[i]);
+    lv_obj_align(wifi_bars[i], LV_ALIGN_TOP_MID, wifiCenterOffsetX + i * 7, wifiTopOffsetY + (wifiBarHeights[3] - wifiBarHeights[i]));
+  }
 
   // Screensaver
   screen3 = lv_obj_create(NULL);
@@ -325,35 +453,56 @@ void update_screen_values(printer_values pValues)
     lv_obj_clear_flag(tool_target_temp_label, LV_OBJ_FLAG_HIDDEN);
   }
 
-  // Chamber Temp
-
-  if (pValues.chamber_temp < 30 && pValues.bedtemp_target == 0 && pValues.tooltemp_target == 0 && pValues.bedtemp_actual < 50)
+  // Layer info (A1 has no chamber temp)
+  if (pValues.layer_current == 0 && pValues.layer_total == 0)
   {
     lv_obj_set_local_style_prop(label_chamber_temp, LV_STYLE_TEXT_COLOR, v_off, LV_PART_MAIN);
+    lv_label_set_text(label_chamber_temp, "-");
+    lv_label_set_text(label_layer_total, "-");
   }
   else
   {
     lv_obj_set_local_style_prop(label_chamber_temp, LV_STYLE_TEXT_COLOR, v_on, LV_PART_MAIN);
+    lv_label_set_text(label_chamber_temp, String(pValues.layer_current, 10).c_str());
+    if (pValues.layer_total > 0)
+    {
+      lv_label_set_text(label_layer_total, String(pValues.layer_total, 10).c_str());
+      lv_obj_clear_flag(label_layer_total, LV_OBJ_FLAG_HIDDEN);
+    }
+    else
+    {
+      lv_label_set_text(label_layer_total, "-");
+      lv_obj_add_flag(label_layer_total, LV_OBJ_FLAG_HIDDEN);
+    }
   }
-
-  lv_label_set_text(label_chamber_temp, (String(pValues.chamber_temp, 10) + "°C").c_str());
 
   // Message
+  String currentMessage = pValues.message;
+  currentMessage.trim();
+  if (currentMessage.length() > 0 && currentMessage != "null")
+  {
+    latchedCenterStatus = currentMessage;
+  }
 
-  if (pValues.message != "null")
+  if (latchedCenterStatus.length() > 0)
   {
-    lv_label_set_text(label_message, pValues.message.c_str());
+    lv_label_set_text(label_message, latchedCenterStatus.c_str());
   }
-  else
-  {
-    lv_label_set_text(label_message, "Welcome");
-  }
+
   int16_t progress_data = 0;
 
   // Progress
 
   String nameStrpriting = "0";
-  progress_data = pValues.progress;
+  progress_data = (int16_t)pValues.progress;
+  if (progress_data < 0)
+  {
+    progress_data = 0;
+  }
+  if (progress_data > 100)
+  {
+    progress_data = 100;
+  }
   uint16_t datas = (uint16_t)(progress_data);
 
   if (datas == 0)
@@ -364,7 +513,25 @@ void update_screen_values(printer_values pValues)
   {
     nameStrpriting = String(datas, 10) + "%";
   }
-  lv_arc_set_value(progress_arc, progress_data);
+  lv_color_t progress_color = lv_color_hex(0x505050);
+  if (progress_data >= 1 && progress_data <= 25)
+  {
+    progress_color = lv_color_hex(0xff7a00);
+  }
+  else if (progress_data > 25 && progress_data <= 50)
+  {
+    progress_color = lv_color_hex(0x00c8ff);
+  }
+  else if (progress_data > 50 && progress_data <= 75)
+  {
+    progress_color = lv_color_hex(0xffd400);
+  }
+  else if (progress_data > 75)
+  {
+    progress_color = lv_color_hex(0x00ff00);
+  }
+  lv_obj_set_style_arc_color(progress_arc, progress_color, LV_PART_INDICATOR);
+  updateWifiIndicator();
 
   lv_label_set_text(progress_label, nameStrpriting.c_str());
 
@@ -384,17 +551,100 @@ void update_screen_values(printer_values pValues)
 
   // Screentype
 
-  if (pValues.is_printing && pValues.bedtemp_target > 0 && pValues.tooltemp_target > 0 && pValues.progress > 1)
+  bool showProgress = pValues.is_printing || progress_data > 0;
+  bool hasMessage = latchedCenterStatus.length() > 0;
+  if (!pValues.has_error && latchedCenterStatus.startsWith("ERROR"))
   {
-    lv_obj_clear_flag(progress_label, LV_OBJ_FLAG_HIDDEN);
+    latchedCenterStatus = "";
+  }
+
+  bool hasErrorState = pValues.has_error;
+
+  if (hasErrorState)
+  {
+    setCenterLabelsTheme(lv_color_hex(0xff0000));
+    lv_label_set_text(label_message, "Error");
+    lv_obj_add_flag(progress_label, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(label_message, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_text_opa(progress_label, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_text_opa(label_message, LV_OPA_COVER, LV_PART_MAIN);
+    centerFadeInitialized = false;
+  }
+  else if (showProgress)
+  {
+    setCenterLabelsTheme(progress_color);
     lv_obj_clear_flag(progress_arc, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(label_message, LV_OBJ_FLAG_HIDDEN);
+
+    unsigned long now = millis();
+    bool toggledCenter = false;
+    if (now - centerToggleLastMs >= centerToggleMs)
+    {
+      centerToggleLastMs = now;
+      centerShowProgress = !centerShowProgress;
+      toggledCenter = true;
+    }
+
+    if (hasMessage)
+    {
+      lv_obj_clear_flag(progress_label, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_clear_flag(label_message, LV_OBJ_FLAG_HIDDEN);
+
+      if (!centerFadeInitialized)
+      {
+        lv_obj_set_style_text_opa(progress_label, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_text_opa(label_message, LV_OPA_TRANSP, LV_PART_MAIN);
+        centerFadeInitialized = true;
+        centerShowProgress = true;
+        toggledCenter = true;
+      }
+
+      if (centerShowProgress)
+      {
+        if (toggledCenter)
+        {
+          latchedArcValue = progress_data;
+          animate_progress_arc(progress_arc, latchedArcValue, 900);
+        }
+        else
+        {
+          lv_arc_set_value(progress_arc, latchedArcValue);
+        }
+        animate_label_fade(progress_label, lv_obj_get_style_text_opa(progress_label, LV_PART_MAIN), LV_OPA_COVER, centerFadeMs);
+        animate_label_fade(label_message, lv_obj_get_style_text_opa(label_message, LV_PART_MAIN), LV_OPA_TRANSP, centerFadeMs);
+      }
+      else
+      {
+        lv_arc_set_value(progress_arc, latchedArcValue);
+        animate_label_fade(progress_label, lv_obj_get_style_text_opa(progress_label, LV_PART_MAIN), LV_OPA_TRANSP, centerFadeMs);
+        animate_label_fade(label_message, lv_obj_get_style_text_opa(label_message, LV_PART_MAIN), LV_OPA_COVER, centerFadeMs);
+      }
+    }
+    else
+    {
+      latchedArcValue = progress_data;
+      lv_arc_set_value(progress_arc, latchedArcValue);
+      lv_obj_clear_flag(progress_label, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_add_flag(label_message, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_set_style_text_opa(progress_label, LV_OPA_COVER, LV_PART_MAIN);
+      lv_obj_set_style_text_opa(label_message, LV_OPA_TRANSP, LV_PART_MAIN);
+    }
   }
   else
   {
-    lv_obj_add_flag(progress_label, LV_OBJ_FLAG_HIDDEN);
+    centerFadeInitialized = false;
+    setCenterLabelsTheme(lv_color_hex(0xa0a0a0));
+    latchedArcValue = 0;
     lv_arc_set_value(progress_arc, 0);
-    lv_obj_clear_flag(label_message, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(progress_label, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(progress_arc, LV_OBJ_FLAG_HIDDEN);
+    if (hasMessage)
+    {
+      lv_obj_clear_flag(label_message, LV_OBJ_FLAG_HIDDEN);
+    }
+    else
+    {
+      lv_obj_add_flag(label_message, LV_OBJ_FLAG_HIDDEN);
+    }
   }
 
   // Screensaver logic
