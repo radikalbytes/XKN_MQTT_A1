@@ -267,8 +267,8 @@ void init_ui()
 
   lv_obj_t *label1 = lv_label_create(screen1);
   lv_obj_add_style(label1, &style_label_logo, LV_PART_MAIN);
-  lv_label_set_text(label1, "XKN");
-  lv_obj_align(label1, LV_ALIGN_CENTER, 0, 0);
+  lv_label_set_text(label1, "XKN 2");
+  lv_obj_align(label1, LV_ALIGN_CENTER, 0, -10);
 
   label2 = lv_label_create(screen1);
   lv_style_set_text_font(&style_label_status, &lv_font_montserrat_22);
