@@ -669,24 +669,12 @@ void update_screen_values(printer_values pValues)
     lastUpdate = millis();
   }
 
-  // Screensaver activate
-
-  if (millis() - lastUpdate > 1000 * 60 * 10)
+  // Screensaver disabled on ESP32-S3 SuperMini.
+  // There is no touch input to wake the screen, so keeping it visible avoids losing status.
+  if (screensaver_active)
   {
-    if (!screensaver_active)
-    {
-      screensaver_active = true;
-      lv_display_led_Off();
-      lv_scr_load(screen3);
-    }
-  }
-  else
-  {
-    if (screensaver_active)
-    {
-      lv_scr_load(screen2);
-      screensaver_active = false;
-      lv_display_led_On();
-    }
+    lv_scr_load(screen2);
+    screensaver_active = false;
+    lv_display_led_On();
   }
 }
