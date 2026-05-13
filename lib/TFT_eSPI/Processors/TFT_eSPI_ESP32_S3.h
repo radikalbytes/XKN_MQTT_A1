@@ -12,6 +12,7 @@
 
 // Include processor specific header
 #include "soc/spi_reg.h"
+#include "soc/gpio_struct.h"
 #include "driver/spi_master.h"
 
 #if !defined(CONFIG_IDF_TARGET_ESP32S3) && !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32)
@@ -185,7 +186,10 @@ SPI3_HOST = 2
         #define DC_D GPIO.out1_w1ts.val = (1 << (TFT_DC - 32))//;GPIO.out1_w1ts.val = (1 << (TFT_DC - 32))
       #endif
     #elif (TFT_DC >= 0)
-      #if defined (RPI_DISPLAY_TYPE)
+      #if defined(CONFIG_IDF_TARGET_ESP32S3)
+        #define DC_C digitalWrite(TFT_DC, LOW)
+        #define DC_D digitalWrite(TFT_DC, HIGH)
+      #elif defined (RPI_DISPLAY_TYPE)
         #if defined (ILI9486_DRIVER)
           // RPi ILI9486 display needs a slower DC change
           #define DC_C GPIO.out_w1tc = (1 << TFT_DC); \
@@ -240,7 +244,10 @@ SPI3_HOST = 2
         #define CS_H GPIO.out1_w1ts.val = (1 << (TFT_CS - 32))//;GPIO.out1_w1ts.val = (1 << (TFT_CS - 32))
       #endif
     #elif (TFT_CS >= 0)
-      #ifdef RPI_DISPLAY_TYPE  // RPi display needs a slower CS change
+      #if defined(CONFIG_IDF_TARGET_ESP32S3)
+        #define CS_L digitalWrite(TFT_CS, LOW)
+        #define CS_H digitalWrite(TFT_CS, HIGH)
+      #elif defined(RPI_DISPLAY_TYPE)  // RPi display needs a slower CS change
         #define CS_L GPIO.out_w1ts = (1 << TFT_CS); GPIO.out_w1tc = (1 << TFT_CS)
         #define CS_H GPIO.out_w1tc = (1 << TFT_CS); GPIO.out_w1ts = (1 << TFT_CS)
       #else

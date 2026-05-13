@@ -20,6 +20,21 @@ Round LCD GC9A01 conected as:
 |RST|GPIO 4|Reset|
 |BL|GPIO 21|Backlight|
 
+## ESP32-S3 SuperMini (4MB Flash / 2MB PSRAM)
+
+Use PlatformIO environment `esp32s3supermini`.
+
+Suggested GC9A01 wiring for this branch:
+
+|Function|Pin|Description|
+|---|---|---|
+|MOSI|GPIO 11|SPI Data In (SDI/SDA)|
+|SCLK|GPIO 12|SPI Clock|
+|CS|GPIO 10|Chip Select|
+|DC|GPIO 9|Data/Command (RS)|
+|RST|GPIO 14|Reset|
+|BL|GPIO 21|Backlight|
+
 ![LCD](img/lcd.jpg)
 
 
