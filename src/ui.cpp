@@ -660,24 +660,12 @@ void update_screen_values(printer_values pValues)
     lastUpdate = millis();
   }
 
-  // Screensaver activate
-
-  if (millis() - lastUpdate > 1000 * 60 * 10)
+  // Screensaver disabled on ESP32 dev too.
+  // Keeping the display always visible avoids getting stuck on a black screen.
+  if (screensaver_active)
   {
-    if (!screensaver_active)
-    {
-      screensaver_active = true;
-      lv_display_led_Off();
-      lv_scr_load(screen3);
-    }
-  }
-  else
-  {
-    if (screensaver_active)
-    {
-      lv_scr_load(screen2);
-      screensaver_active = false;
-      lv_display_led_On();
-    }
+    lv_scr_load(screen2);
+    screensaver_active = false;
+    lv_display_led_On();
   }
 }
