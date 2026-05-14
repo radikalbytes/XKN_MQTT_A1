@@ -37,6 +37,9 @@ Suggested GC9A01 wiring for this branch:
 
 ![LCD](img/lcd.jpg)
 
+## Cheapest device only Round LCD + ESP32S3 Supermini from Aliexpress
+![LCD](img/img1.jpeg)
+![LCD](img/img2.jpeg)
 
 
 
